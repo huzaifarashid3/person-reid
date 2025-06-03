@@ -17,7 +17,7 @@ class PersonReID:
         # You would typically use a specialized person ReID model here
         # For this example, we'll use CLIP's image encoder
         self.image_model = self.clip_model.vision_model
-        
+        # self.clip_model.text_model
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.clip_model.to(self.device)
         self.image_model.to(self.device)
@@ -28,20 +28,25 @@ class PersonReID:
     def _process_image(self, image_path):
         image = Image.open(image_path).convert('RGB')
         inputs = self.clip_processor(images=image, return_tensors="pt")
-        return inputs.pixel_values.to(self.device)
+        print("inputs: ",inputs)
+        return inputs.to(self.device)
 
     def _process_text(self, text):
-        inputs = self.clip_processor(text=text, return_tensors="pt", padding=True)
-        return inputs.input_ids.to(self.device)
+        inputs = self.clip_processor(text=[text], return_tensors="pt", padding=True)
+        print("inputs: ",inputs)
+        return inputs.to(self.device)
 
     def add_text_target(self, text, name):
         target_id = f"text_{len(self.targets)}"
         
         # Process text and get embeddings
         text_tensor = self._process_text(text)
+        print("text_tensor: ",text_tensor,text)
         with torch.no_grad():
-            embeddings = self.clip_model.get_text_features(text_tensor)
-
+            embeddings = self.clip_model.get_text_features(**text_tensor)
+            embeddings = embeddings.squeeze().tolist()
+            embeddings = torch.tensor([embeddings])     
+            print("embedding:" , embeddings,embeddings.shape)
         self.targets[target_id] = {
             'type': 'text',
             'data': text,
@@ -53,17 +58,20 @@ class PersonReID:
 
     def add_image_target(self, image_file, name):
         target_id = f"image_{len(self.targets)}"
-        
+        print(image_file)
         # Save the uploaded image temporarily
         temp_path = os.path.join(Config.TEMP_FOLDER, f"{target_id}.jpg")
+        print(temp_path)
         image_file.save(temp_path)
         
         try:
             # Process image and get embeddings
             image_tensor = self._process_image(temp_path)
+            print("image_tensor: ",image_tensor)
             with torch.no_grad():
-                embeddings = self.image_model(image_tensor).pooler_output
-
+                embeddings = self.clip_model.get_image_features(**image_tensor)
+                # embeddings = self.image_model(image_tensor).pooler_output
+                print("embedding:" , embeddings,embeddings.shape)
             self.targets[target_id] = {
                 'type': 'image',
                 'data': temp_path,  # Store the path to the saved image
@@ -79,15 +87,15 @@ class PersonReID:
 
     def search_targets(self, video_ids, target_ids):
         results = {}
-        
+        print("qweerty ",video_ids, target_ids)
         for video_id in video_ids:
             video_results = {}
             frames_path = os.path.join(Config.PROCESSED_FOLDER, video_id)
-            
+            print("hello",os.path.join(Config.PROCESSED_FOLDER, video_id))
             for target_id in target_ids:
                 target = self.targets[target_id]
                 target_embeddings = target['embeddings']
-                
+                # print(target_id ,target,target_embeddings)
                 frame_matches = []
                 
                 # Process each frame in the video's processed folder
@@ -97,15 +105,15 @@ class PersonReID:
                         frame_tensor = self._process_image(frame_path)
                         
                         with torch.no_grad():
-                            frame_embeddings = self.image_model(frame_tensor).pooler_output
-                            
+                            frame_embeddings = self.clip_model.get_image_features(**frame_tensor)
+                            print("frame_embeddings:" , frame_embeddings,frame_embeddings.shape)
                             # Calculate similarity
                             similarity = F.cosine_similarity(
                                 target_embeddings,
                                 frame_embeddings
                             ).item()
-                            
-                            if similarity > 0.7:  # Threshold for matching
+                            # print(similarity)
+                            if similarity > 0.1:  # Threshold for matching
                                 frame_idx = int(frame_file.split('_frame_')[1].split('.')[0])
                                 frame_matches.append({
                                     'frame_idx': frame_idx,
